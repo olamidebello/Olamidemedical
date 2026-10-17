@@ -82,3 +82,43 @@ Integration tests exercise registration through billing, appointment conflicts, 
 The canonical deployment domain is **https://olamidemedical.health**. It replaces the previously proposed `medical.africandroid.world` address.
 
 `deploy/olamidemedical.health.nginx.conf` provides an HTTPS reverse-proxy configuration for the loopback service on port 8080. Before enabling it, point the domain's DNS A record to the deployment server, obtain a TLS certificate for `olamidemedical.health`, and ensure the certificate paths in the configuration exist. Add an AAAA record only if the server has working IPv6 connectivity and corresponding listeners. Validate with `nginx -t` before reloading Nginx. This configuration does not create DNS records or obtain certificates by itself. The `www` hostname is not configured.
+
+## Android app and download page
+
+The Android app is an online WebView client of `https://olamidemedical.health/`,
+with the existing staff and patient account permissions. It requires Android
+8.0+ and an internet connection. It does not provide offline records or push
+notifications. Only the INTERNET permission is requested. Cleartext traffic,
+file/content access, mixed content, third-party cookies, screenshots and Android
+backup are disabled. External HTTPS links open in the system browser.
+
+The website links to `/mobile` from sign-in and the signed-in sidebar. The APK
+is served at `/downloads/olamide-medical.apk`; its SHA-256 checksum is adjacent.
+Only those exact public download paths are allowed. A missing package is
+reported as pending deployment, not a successful download.
+
+Build with JDK 17, Python 3 and the official Android SDK (platform 35 and
+build-tools 35.0.0):
+
+```bash
+ANDROID_HOME=/path/to/android-sdk bash scripts/build-mobile.sh
+```
+
+The first build creates a release signing key outside the repository in
+`$HOME/.local/share/olamidemedical-signing`, or `MEDICAL_SIGNING_DIR` if set.
+Keep that directory private and securely backed up. All subsequent updates
+must use the same key and a higher manifest versionCode; never commit the key
+or password. The packaged initial APK is signed with the initial release key.
+Do not rebuild an update with a new key; Android will reject it as an update.
+The app is distributed directly, not through Google Play. Emulator/device
+runtime testing remains required before clinical rollout.
+
+On the existing server, run from the current repository checkout:
+
+```bash
+ansible-playbook -i localhost, -c local ansible/deploy-mobile.yml
+```
+
+This backs up replaced code/files, restarts the existing hospital service and
+checks the APK endpoint on port 8095 (`-e medical_port=8080` for the original
+8080 installation). It preserves the database and existing service unit.

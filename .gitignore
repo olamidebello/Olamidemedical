@@ -2,3 +2,7 @@ data/
 __pycache__/
 *.pyc
 .env
+android/build/
+*.jks
+*.keystore
+*.idsig

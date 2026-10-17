@@ -1,0 +1,63 @@
+---
+- name: Deploy hospital Android app and website download page
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    medical_install: /opt/olamidemedical
+    medical_port: 8095
+  tasks:
+    - name: Confirm compiled Android package exists
+      ansible.builtin.stat:
+        path: '{{ playbook_dir }}/../static/downloads/olamide-medical.apk'
+      delegate_to: localhost
+      become: false
+      register: medical_apk
+    - name: Require a compiled package
+      ansible.builtin.assert:
+        that: medical_apk.stat.exists
+        fail_msg: Build the APK with scripts/build-mobile.sh before deployment.
+    - name: Confirm hospital installation exists
+      ansible.builtin.stat:
+        path: '{{ medical_install }}/server.py'
+      register: medical_installed
+    - name: Require hospital installation
+      ansible.builtin.assert:
+        that: medical_installed.stat.exists
+    - name: Create download directory
+      ansible.builtin.file:
+        path: '{{ medical_install }}/static/downloads'
+        state: directory
+        mode: '0755'
+    - name: Install hospital server and mobile download files with backups
+      ansible.builtin.copy:
+        src: '{{ playbook_dir }}/../{{ item }}'
+        dest: '{{ medical_install }}/{{ item }}'
+        mode: '0644'
+        backup: true
+      loop:
+        - server.py
+        - static/index.html
+        - static/style.css
+        - static/mobile.html
+        - static/mobile.js
+        - static/downloads/olamide-medical.apk
+        - static/downloads/olamide-medical.apk.sha256
+      notify: Restart hospital
+    - name: Restart updated service
+      ansible.builtin.meta: flush_handlers
+    - name: Verify mobile download endpoint
+      ansible.builtin.uri:
+        url: 'http://127.0.0.1:{{ medical_port }}/downloads/olamide-medical.apk'
+        status_code: 200
+        return_content: false
+      register: medical_download
+      until: medical_download.status | default(0) == 200
+      retries: 10
+      delay: 2
+      when: not ansible_check_mode
+  handlers:
+    - name: Restart hospital
+      ansible.builtin.systemd:
+        name: olamidemedical
+        state: restarted

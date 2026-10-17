@@ -99,9 +99,22 @@ class Handler(BaseHTTPRequestHandler):
     def route(self,method):
         path=urlparse(self.path).path
         if path=='/health':return self.send(200,{'status':'ok'})
+        if path in ('/downloads/olamide-medical.apk','/downloads/olamide-medical.apk.sha256') and method=='GET':
+            file=ROOT/'static'/path.lstrip('/')
+            if not file.is_file():return self.send(404,{'error':'Android app build is not installed yet'})
+            self.send_response(200)
+            self.send_header('Content-Type','application/vnd.android.package-archive' if path.endswith('.apk') else 'text/plain; charset=utf-8')
+            self.send_header('Content-Disposition','attachment; filename="'+file.name+'"')
+            self.send_header('Content-Length',str(file.stat().st_size))
+            self.send_header('Cache-Control','no-store')
+            self.send_header('X-Content-Type-Options','nosniff')
+            self.end_headers()
+            with file.open('rb') as stream:
+                while chunk:=stream.read(65536):self.wfile.write(chunk)
+            return
         if not path.startswith('/api/'):
-            if method!='GET' or path not in ('/','/app.js','/style.css'):return self.send(404,{'error':'Not found'})
-            file=ROOT/'static'/({'/':'index.html'}.get(path,path[1:]));raw=file.read_bytes()
+            if method!='GET' or path not in ('/','/app.js','/style.css','/mobile','/mobile.js'):return self.send(404,{'error':'Not found'})
+            file=ROOT/'static'/({'/':'index.html','/mobile':'mobile.html'}.get(path,path[1:]));raw=file.read_bytes()
             self.send_response(200);self.send_header('Content-Type',{'html':'text/html','js':'text/javascript','css':'text/css'}[file.suffix[1:]]);self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'");self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw);return
         with connect() as c:
             if path=='/api/login' and method=='POST':
