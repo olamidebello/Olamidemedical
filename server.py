@@ -130,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
         path=urlparse(self.path).path
         if path=='/health':return self.send(200,{'status':'ok'})
         if not path.startswith('/api/'):
-            if method!='GET' or path not in ('/','/app.js','/style.css','/logo.png'):return self.send(404,{'error':'Not found'})
+            if method!='GET' or path not in ('/', '/app.js', '/style.css', '/logo.png', '/developer-guide.html', '/user-guide.html', '/patient-guide.html', '/terms.html', '/privacy.html', '/copyright.html'):return self.send(404,{'error':'Not found'})
             file=ROOT/'static'/({'/':'index.html'}.get(path,path[1:]));raw=file.read_bytes()
             self.send_response(200);self.send_header('Content-Type',{'html':'text/html','js':'text/javascript','css':'text/css','png':'image/png'}[file.suffix[1:]]);self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'");self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw);return
         with connect() as c:

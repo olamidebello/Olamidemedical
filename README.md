@@ -94,3 +94,7 @@ Medical Devices accepts authenticated normalized JSON and a defined numeric FHIR
 ## Daily clinical workspaces
 
 [Nursing/doctor charting and duty rosters](docs/CHARTING_AND_ROSTERS.md) cover structured drafts, signatures, linked corrections, assignments, attendance, leave, swaps and supervisor coverage. [Administration and integrations](docs/TENANCY_AND_INTEGRATIONS.md) also covers registration, private practices, device ingestion, insurance, charity/coupons, alerts, telemedicine and AI boundaries.
+
+## Guides and policy pages
+
+Public pages are linked from the sign-in and application footer: [developer guide](static/developer-guide.html), [staff guide](static/user-guide.html), [patient guide](static/patient-guide.html), [terms](static/terms.html), [privacy](static/privacy.html), and [copyright](static/copyright.html). The deployment copies these with the GUI; no database migration is needed. Terms and privacy are clearly marked operator-approval drafts. Supply the operating entity, contacts, jurisdiction, retention, hosting/provider details and effective date before production adoption. These pages do not implement click-through consent or policy acceptance records.
