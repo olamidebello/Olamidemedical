@@ -76,3 +76,9 @@ node --check static/app.js
 ```
 
 Integration tests exercise registration through billing, appointment conflicts, signed-note immutability, stale edit rejection, cross-patient links, portal isolation, stock dispensing and duplicate-dispense prevention.
+
+## Public domain
+
+The canonical deployment domain is **https://olamidemedical.health**. It replaces the previously proposed `medical.africandroid.world` address.
+
+`deploy/olamidemedical.health.nginx.conf` provides an HTTPS reverse-proxy configuration for the loopback service on port 8080. Before enabling it, point the domain's DNS A record to the deployment server, obtain a TLS certificate for `olamidemedical.health`, and ensure the certificate paths in the configuration exist. Add an AAAA record only if the server has working IPv6 connectivity and corresponding listeners. Validate with `nginx -t` before reloading Nginx. This configuration does not create DNS records or obtain certificates by itself. The `www` hostname is not configured.
