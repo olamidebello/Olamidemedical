@@ -1,6 +1,6 @@
 let me, module, records=[], selected;
 const $=id=>document.getElementById(id);
-const labels={patients:'Patient registration',appointments:'Scheduling',encounters:'Encounters & admissions',notes:'Clinical notes',allergies:'Allergies',medications:'Medications',vitals:'Vitals & observations',orders:'Clinical orders',results:'Diagnostic results',care_plans:'Care plans',referrals:'Referrals & authorizations',beds:'Beds & capacity',inventory:'Pharmacy inventory',prescriptions:'Prescriptions',administrations:'Medication administration',invoices:'Billing & charges',payments:'Payment ledger',messages:'In Basket & messages',workqueues:'Workqueues',specialty_cases:'Specialty procedures',outreach:'Population health',documents:'Documents & consent',immunizations:'Immunizations',history:'Patient history',care_team:'Care team',registrations:'Registrations & onboarding',professionals:'Private doctors & nurses',knowledge:'Knowledge & staff aid',telemedicine:'Telemedicine',devices:'Medical devices',mobility:'Patient mobility',audit:'Audit trail',hospitals:'Hospital administration','hospital-users':'Staff & access','tenant-audit':'Administration audit'};
+const labels={patients:'Patient registration',appointments:'Scheduling',encounters:'Encounters & admissions',notes:'Clinical notes',allergies:'Allergies',medications:'Medications',vitals:'Vitals & observations',orders:'Clinical orders',results:'Diagnostic results',care_plans:'Care plans',referrals:'Referrals & authorizations',beds:'Beds & capacity',inventory:'Pharmacy inventory',prescriptions:'Prescriptions',administrations:'Medication administration',invoices:'Billing & charges',payments:'Payment ledger',messages:'In Basket & messages',workqueues:'Workqueues',specialty_cases:'Specialty procedures',outreach:'Population health',documents:'Documents & consent',immunizations:'Immunizations',history:'Patient history',care_team:'Care team',registrations:'Registrations & onboarding',professionals:'Provider registration & management',knowledge:'Knowledge & staff aid',telemedicine:'Telemedicine',devices:'Medical devices',mobility:'Patient mobility',audit:'Audit trail',hospitals:'Hospital administration','hospital-users':'Staff & access','tenant-audit':'Administration audit'};
 Object.assign(labels,{safety:'Safety Command Center',critical_results:'Critical result acknowledgment',referral_followups:'Referral follow-up',medication_reviews:'Medication reconciliation',transition_tasks:'Care transition tasks',safety_events:'Safety event reports',nursing:'Nursing Station',doctor:'Doctor Workspace',rosters:'Staff Scheduling',attendance:'Attendance & Leave',coverage:'Coverage & Supervisor',availability:'Practitioner availability',knowledge_articles:'Knowledge articles',staff_requests:'Staff aid requests',payers:'Insurance payers',policies:'Patient coverage',authorizations:'Prior authorizations',claims:'Insurance claims',remittances:'Remittances',charities:'Charity organizations',sponsorships:'Patient sponsorships',coupons:'Coupon controls',coupon_redemptions:'Coupon redemptions',alerts:'Alerts & escalation',ai:'AI knowledge assistance'});
 function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
 async function api(path,method='GET',data){const r=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json','X-Requested-With':'OlamideMedical'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok){if(r.status===401){$('app').hidden=true;$('login').hidden=false}throw Error(d.error)}return d}
@@ -26,7 +26,7 @@ function render(){const filter=$('search').value.toLowerCase();const rows=record
 $('search').oninput=render;$('refresh').onclick=()=>module?open(module):overview();$('new').onclick=()=>edit(null);$('close').onclick=()=>$('editor').close();
 async function edit(r){
  selected=r;const targetModule=module;$('editortitle').textContent=(r?'Edit ':'New ')+labels[module];$('fields').replaceChildren();$('formerror').textContent='';$('editor').showModal();$('save').disabled=true;
- const choices={profession:['doctor','nurse'],credential_status:['unverified','reviewed','expired','suspended'],mode:['in-person','video','audio'],discount_type:['percent','fixed'],severity:['info','warning','urgent'],audience:['admin','clinician','nurse','billing','clinical','staff'],urgency:['routine','urgent']};
+ const choices={profession:['doctor','nurse','pharmacist','dentist','therapist','allied_health'],credential_status:['unverified','reviewed','expired','suspended'],mode:['in-person','video','audio'],discount_type:['percent','fixed'],severity:['info','warning','urgent'],audience:['admin','clinician','nurse','billing','clinical','staff'],urgency:['routine','urgent']};
  const links={result_id:'results',referral_id:'referrals',patient_id:'patients',encounter_id:'encounters',order_id:'orders',medication_id:'medications',inventory_id:'inventory',invoice_id:'invoices',payer_id:'payers',policy_id:'policies',authorization_id:'authorizations',claim_id:'claims',charity_id:'charities',coupon_id:'coupons',professional_id:'professionals',user_id:'staff-directory',assigned_user_id:'staff-directory'};
  const linked={};
  try{
@@ -220,7 +220,35 @@ adminForm(publicRegistration,'Hospital / practice onboarding request',[{name:'na
 adminForm(publicRegistration,'Accept staff or patient invitation',[{name:'code',label:'Single-use invitation code'},{name:'username'},{name:'password',type:'password'}],d=>api('register-user','POST',d));
 
 function numericField(k){return k.endsWith('_id')||k.endsWith('_cents')||['quantity','reorder_level','authorized_units','used_units','discount_value','usage_limit'].includes(k)}
-function professionalsView(){return recordView('professionals')}
+async function professionalsView(){
+ const root=serviceWorkspace('professionals'),message=el('p');message.setAttribute('role','status');root.append(message);
+ const admin=me.role==='admin';root.append(el('h2','Your hospital provider directory'));
+ const toolbar=el('div'),search=el('input');search.type='search';search.placeholder='Search provider, specialty, license or status';search.setAttribute('aria-label',search.placeholder);toolbar.append(search);
+ if(admin){const create=el('button','Register provider');create.onclick=async()=>{await recordView('professionals');await edit(null)};toolbar.append(create)}root.append(toolbar);
+ try{
+  const profiles=await api('professionals'),list=el('div');root.append(list);
+  const draw=()=>{list.replaceChildren();const q=search.value.toLowerCase();for(const profile of profiles.filter(p=>[p.name,p.profession,p.specialty,p.license_number,p.status,p.credential_status].join(' ').toLowerCase().includes(q))){
+   const card=el('section',undefined,'admin-panel');card.append(el('h3',profile.name),el('p',pretty(profile.profession)+' · '+(profile.specialty||'Specialty not recorded')+' · '+profile.status),el('p','License: '+(profile.license_number||'Not recorded')+' · '+(profile.license_jurisdiction||'Jurisdiction not recorded')+' · Expiry: '+(profile.license_expiry||'Not recorded')),el('p','Credentials: '+(profile.credential_status||'unverified')+' · Staff account: '+(profile.user_id?'Linked':'Not registered')));
+   if(admin){const editButton=el('button','Edit profile');editButton.onclick=async()=>{await recordView('professionals');await edit(profile)};card.append(editButton);
+    for(const [action,label] of [['review','Review credentials'],['invite','Create account invitation'],['activate','Activate / restore'],['deactivate','Deactivate'],['suspend','Suspend']]){
+     if(action==='invite'&&(profile.user_id||profile.status!=='inactive'))continue;
+     const b=el('button',label);b.onclick=async()=>{try{
+      if(action==='review'){adminForm(card,'Record credential review',[{name:'review_reference',label:'Evidence / credential review reference'}],async d=>{await api('provider-management','PATCH',{...d,id:profile.id,version:profile.version,action});await professionalsView();return 'Credential review saved'});return}
+      if(!confirm(label+' for '+profile.name+'? Activation restores the linked staff login; suspension/deactivation revokes its access.'))return;
+      const result=await api('provider-management','PATCH',{id:profile.id,version:profile.version,action});
+      if(result.invitation_code)message.textContent='Provider account invitation (shown once): '+result.invitation_code;
+      else await professionalsView();
+     }catch(e){message.textContent=e.message}};card.append(b)
+    }
+   }list.append(card)
+  }if(!list.children.length)list.append(el('p','No providers match. Hospital admins can register a provider or review an application.'))};search.oninput=draw;draw();
+  if(admin){root.append(el('h2','Provider applications'));
+   for(const application of await api('provider-applications')){const card=el('section',undefined,'admin-panel');card.append(el('h3',application.name+' · '+pretty(application.profession)),el('p',application.email+' · '+application.specialty+' · '+application.status),el('p','License '+application.license_number+' · '+application.license_jurisdiction+' · Expires '+application.license_expiry));
+    if(application.status==='pending')adminForm(card,'Review application',[{name:'action',options:[['approve','Approve and create invitation'],['reject','Reject']]},{name:'review_reference',label:'Credential evidence / review decision reference'}],async d=>{const result=await api('provider-applications','POST',{...d,id:application.id});return result.invitation_code?'Approved. Provider invitation (shown once): '+result.invitation_code+' · Refresh after registration to activate.':'Application rejected'});root.append(card)
+   }
+  }
+ }catch(e){message.textContent=e.message}
+}
 async function knowledgeView(){
  const root=serviceWorkspace('knowledge');root.append(el('h2','Clinical knowledge & peer support'));
  for(const [label,destination] of [['Search knowledge articles','knowledge_articles'],['Ask the care team / review requests','staff_requests'],['Alerts & escalation','alerts'],['AI knowledge assistance','ai']]){const b=el('button',label);b.onclick=()=>open(destination);root.append(b)}
@@ -397,3 +425,10 @@ async function safetyView(){
   if(!report.identity_review_candidates.length)quality.append(el('p','No duplicate name/date-of-birth candidates in this check.'));root.append(quality);
  }catch(e){root.append(el('p',e.message))}
 }
+
+adminForm(publicRegistration,'Apply as a healthcare provider',[
+ {name:'hospital_slug',label:'Hospital / practice registration code'},
+ {name:'name',label:'Full professional name'},{name:'email',type:'email'},{name:'phone'},
+ {name:'profession',options:['doctor','nurse','pharmacist','dentist','therapist','allied_health'].map(p=>[p,pretty(p)])},
+ {name:'specialty'},{name:'license_number'},{name:'license_jurisdiction'},{name:'license_expiry',type:'date'}
+],d=>api('provider-registration','POST',d));

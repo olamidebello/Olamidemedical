@@ -8,7 +8,7 @@ MODULES={
  'coupons':['code','description','discount_type','discount_value','minimum_cents','maximum_discount_cents','usage_limit','expires','status'],
  'coupon_redemptions':['patient_id','coupon_id','invoice_id','reference','discount_cents','original_amount_cents'],
  'alerts':['title','message','severity','audience','assigned_user_id','due_at','response','status'],
- 'professionals':['user_id','name','profession','specialty','license_number','license_jurisdiction','license_expiry','credential_status','consultation_fee_cents','currency','phone','email','bio','status'],
+ 'professionals':['user_id','name','profession','specialty','license_number','license_jurisdiction','license_expiry','credential_status','credential_reference','consultation_fee_cents','currency','phone','email','bio','status'],
  'availability':['professional_id','starts_at','ends_at','mode','status'],
  'knowledge_articles':['title','category','content','source_url','reviewed_by','status'],
  'staff_requests':['title','question','urgency','assigned_user_id','response','status'],
@@ -20,7 +20,7 @@ MODULES={
 }
 STATES={
  'charities':['active','inactive'],'sponsorships':['requested','approved','paid','rejected'],'coupons':['active','inactive'],'alerts':['open','acknowledged','resolved'],
- 'professionals':['active','inactive','suspended'], 'availability':['available','booked','unavailable'],
+ 'professionals':['inactive','active','suspended'], 'availability':['available','booked','unavailable'],
  'knowledge_articles':['draft','published','archived'],'staff_requests':['open','claimed','resolved'],
  'payers':['active','inactive'],'policies':['unverified','verified','expired','cancelled'],
  'authorizations':['requested','approved','denied','expired'], 'claims':['draft','submitted','pending','approved','denied','paid','void']
@@ -47,15 +47,19 @@ def validate(c,u,table,d,merged,old):
             if not role or not role['active'] or role['role'] not in ('admin','clinician','nurse'):raise ValueError('Assign an active local care-team member')
         if merged.get('status')=='resolved' and not merged.get('response'):raise ValueError('Record a response before resolving')
     if table=='professionals':
-        if not merged.get('name') or merged.get('profession') not in ('doctor','nurse'):raise ValueError('Professional name and doctor/nurse profession required')
+        if not merged.get('name') or merged.get('profession') not in ('doctor','nurse','pharmacist','dentist','therapist','allied_health'):raise ValueError('Professional name and supported provider profession required')
         if merged.get('credential_status','unverified') not in ('unverified','reviewed','expired','suspended'):raise ValueError('Valid credential review status required')
-        if merged.get('credential_status')=='reviewed' and not all(merged.get(k) for k in ('license_number','license_jurisdiction','license_expiry')):raise ValueError('License number, jurisdiction and expiry required for reviewed credentials')
+        if merged.get('credential_status')=='reviewed' and not all(merged.get(k) for k in ('license_number','license_jurisdiction','license_expiry','credential_reference')):raise ValueError('License number, jurisdiction and expiry required for reviewed credentials')
         if merged.get('license_expiry'):date.fromisoformat(merged['license_expiry'])
         if merged.get('user_id'):
             user=c.execute('SELECT * FROM users WHERE id=? AND hospital_id=?',(merged['user_id'],u['hospital_id'])).fetchone()
-            required='clinician' if merged['profession']=='doctor' else 'nurse'
+            required={'nurse':'nurse','pharmacist':'pharmacist'}.get(merged['profession'],'clinician')
             if not user or not user['active'] or user['role']!=required:raise ValueError('Link an active local account with the matching clinician/nurse role')
             if c.execute('SELECT 1 FROM professionals WHERE user_id=? AND id!=?',(merged['user_id'],old['id'] if old else 0)).fetchone():raise ValueError('This user already has a professional profile')
+        if merged.get('status')=='active':
+            if merged.get('credential_status')!='reviewed' or not merged.get('license_expiry') or date.fromisoformat(merged['license_expiry'])<date.today() or not merged.get('user_id'):raise ValueError('Active provider requires reviewed current credentials and a linked staff account')
+            if not c.execute('SELECT 1 FROM users WHERE id=? AND hospital_id=? AND active=1',(merged['user_id'],u['hospital_id'])).fetchone():raise ValueError('Active linked staff account required')
+        if old and old['status']=='active' and merged.get('status') in ('inactive','suspended'):raise ValueError('Use provider management controls to deactivate/suspend and revoke account access')
         if merged.get('currency') and (len(merged['currency'])!=3 or not merged['currency'].isalpha()):raise ValueError('Three-letter currency code required')
     if table=='availability':
         if not merged.get('professional_id') or merged.get('mode') not in ('in-person','video','audio'):raise ValueError('Professional and supported consultation mode required')

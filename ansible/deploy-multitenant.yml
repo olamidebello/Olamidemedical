@@ -101,7 +101,7 @@
             owner: root
             group: root
             mode: '0644'
-          loop: [server.py, tenancy.py, mobility.py, devices.py, registration.py, operations.py, telehealth.py, clinical_ai.py, ward.py, safety.py]
+          loop: [server.py, tenancy.py, mobility.py, devices.py, registration.py, operations.py, telehealth.py, clinical_ai.py, ward.py, safety.py, providers.py]
 
         - name: Install GUI
           ansible.builtin.copy:

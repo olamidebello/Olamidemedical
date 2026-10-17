@@ -7,6 +7,7 @@ import tenancy
 import mobility
 import devices
 import registration
+import providers
 import operations
 import safety
 operations.MODULES.update(safety.MODULES)
@@ -84,10 +85,16 @@ def init_db():
                 ref=' REFERENCES patients(id)' if f=='patient_id' else ' REFERENCES invoices(id)' if f=='invoice_id' else ' REFERENCES orders(id)' if f=='order_id' else ' REFERENCES encounters(id)' if f=='encounter_id' else ' REFERENCES medications(id)' if f=='medication_id' else ' REFERENCES inventory(id)' if f=='inventory_id' else ''
                 cols.append(f'{f} {typ}{ref}')
             c.execute(f"CREATE TABLE IF NOT EXISTS {table}(id INTEGER PRIMARY KEY,{','.join(cols)},created_by TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP,version INTEGER NOT NULL DEFAULT 1)")
+            existing_columns={r['name'] for r in c.execute(f'PRAGMA table_info({table})')}
+            for field in fields:
+                if field not in existing_columns:
+                    column_type='INTEGER' if field.endswith('_id') or field in ('quantity','reorder_level','amount_cents') else 'TEXT'
+                    c.execute(f'ALTER TABLE {table} ADD COLUMN {field} {column_type}')
         tenancy.migrate(c, MODULES)
         mobility.initialize(c)
         devices.initialize(c)
         registration.initialize(c)
+        providers.initialize(c)
         telehealth.initialize(c)
         ward.initialize(c)
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS occupied_patient ON beds(patient_id) WHERE patient_id IS NOT NULL AND patient_id != ''")
@@ -128,6 +135,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Type',{'html':'text/html','js':'text/javascript','css':'text/css','png':'image/png'}[file.suffix[1:]]);self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'");self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(raw);return
         with connect() as c:
             if registration.public(self,c,path,method,password_hash):return
+            if providers.public(self,c,path,method):return
             if path=='/api/device-ingest':
                 if method!='POST':return self.send(405,{'error':'Use POST'})
                 return devices.ingest(self,c)
@@ -150,6 +158,7 @@ class Handler(BaseHTTPRequestHandler):
             if mobility.handle(self,c,u,path,method,PERMISSIONS[u["role"]],MODULES):return
             if devices.handle(self,c,u,path,method):return
             if registration.handle(self,c,u,path,method):return
+            if providers.handle(self,c,u,path,method):return
             if telehealth.handle(self,c,u,path,method):return
             if clinical_ai.handle(self,c,u,path,method):return
             if ward.handle(self,c,u,path,method):return

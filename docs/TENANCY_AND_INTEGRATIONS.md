@@ -153,3 +153,13 @@ Design references (workflow guidance, not a claim of certification or platform e
 - AHRQ MATCH medication-reconciliation toolkit: https://www.ahrq.gov/patient-safety/settings/hospital/match/index.html
 
 No claim is made that these features are unavailable in other platforms. The distinguishing implementation here is their combination with hospital isolation, ownership checks, explicit review and traceable workflows.
+
+## Provider registration and management
+
+**Provider registration & management** provides a searchable hospital directory, profile editing, credential review, account invitations and activation/deactivation/suspension controls. Supported registry professions are doctor, nurse, pharmacist, dentist, therapist and allied health. Doctors/dentists/therapists/allied health map to the clinician account role; nurses and pharmacists use their respective roles. More granular clinical privileges require additional policy configuration.
+
+A provider can apply from the login page using the hospital/practice registration code (its slug), professional contact information, specialty, license number/jurisdiction and current expiry date. Applications remain pending and confer no access. Hospital admins review only their own applications and record an evidence/decision reference. Approval creates an inactive provider profile and a seven-day single-use invitation. After accepting the invitation, the linked account remains disabled until the hospital admin explicitly activates the provider. Credential review is an operator attestation, not an external license-registry verification.
+
+Activation requires a linked matching staff role and reviewed current credentials. Deactivation/suspension disables the linked login and revokes sessions. Restoration is explicit through the activation control and restores the linked staff account; admins should review any separate account restrictions first. Profile versions prevent stale management actions. Existing unrelated staff accounts are not affected. Providers are never automatically activated from a public application.
+
+The deployment migration adds the credential-reference and professional-invitation link fields to existing databases without recreating clinical records. Existing license expiry alerts also apply to providers.

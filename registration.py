@@ -22,6 +22,8 @@ def initialize(c):
         employee_id INTEGER REFERENCES employees(id),expires INTEGER NOT NULL,used_at INTEGER,
         revoked INTEGER NOT NULL DEFAULT 0,created_by TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)'''
     ]:c.execute(sql)
+    if 'professional_id' not in {r['name'] for r in c.execute('PRAGMA table_info(registration_invites)')}:
+        c.execute('ALTER TABLE registration_invites ADD COLUMN professional_id INTEGER REFERENCES professionals(id)')
 
 
 def email(value):
@@ -35,7 +37,7 @@ def text(d,key,limit=150):
     return value.strip()
 
 
-def invite(c,hid,role,patient_id,employee_id,actor):
+def invite(c,hid,role,patient_id,employee_id,actor,professional_id=None):
     if role not in tenancy.ROLES:raise ValueError('Hospital role required')
     if not tenancy.hospital(c,hid):raise ValueError('Active hospital required')
     if role=='patient' and not patient_id:raise ValueError('Patient invitation requires a local patient record')
@@ -44,8 +46,9 @@ def invite(c,hid,role,patient_id,employee_id,actor):
     if employee_id:
         if role=='patient':raise ValueError('Patient invitation cannot be linked to an employee')
         if not c.execute('SELECT 1 FROM employees WHERE id=? AND hospital_id=? AND active=1 AND user_id IS NULL',(employee_id,hid)).fetchone():raise ValueError('Unlinked active employee in this hospital required')
+    if professional_id and not c.execute("SELECT 1 FROM professionals WHERE id=? AND hospital_id=? AND user_id IS NULL AND status='inactive'",(professional_id,hid)).fetchone():raise ValueError('Unlinked inactive local provider required')
     token=secrets.token_urlsafe(32)
-    cur=c.execute('INSERT INTO registration_invites(hospital_id,token_hash,role,patient_id,employee_id,expires,created_by) VALUES(?,?,?,?,?,?,?)',(hid,hashlib.sha256(token.encode()).hexdigest(),role,patient_id,employee_id,int(time.time())+7*86400,actor))
+    cur=c.execute('INSERT INTO registration_invites(hospital_id,token_hash,role,patient_id,employee_id,expires,created_by,professional_id) VALUES(?,?,?,?,?,?,?,?)',(hid,hashlib.sha256(token.encode()).hexdigest(),role,patient_id,employee_id,int(time.time())+7*86400,actor,professional_id))
     return {'id':cur.lastrowid,'invitation_code':token,'expires_in_days':7}
 
 
@@ -69,11 +72,16 @@ def public(handler,c,path,method,hash_password):
     if not invitation or not tenancy.hospital(c,invitation['hospital_id']):raise ValueError('Invalid, expired or used invitation')
     eid=invitation['employee_id']
     if eid and not c.execute('SELECT 1 FROM employees WHERE id=? AND hospital_id=? AND active=1 AND user_id IS NULL',(eid,invitation['hospital_id'])).fetchone():raise ValueError('Employee invitation is no longer eligible')
+    professional_id=invitation['professional_id']
+    if professional_id and not c.execute("SELECT 1 FROM professionals WHERE id=? AND hospital_id=? AND user_id IS NULL AND status='inactive'",(professional_id,invitation['hospital_id'])).fetchone():raise ValueError('Provider invitation is no longer eligible')
     user=tenancy.add_user(c,d.get('username'),d.get('password'),invitation['role'],invitation['hospital_id'],invitation['patient_id'],hash_password)
     c.execute('UPDATE registration_invites SET used_at=? WHERE id=?',(int(now),invitation['id']))
+    if professional_id:
+        c.execute('UPDATE professionals SET user_id=?,version=version+1 WHERE id=? AND hospital_id=?',(user['id'],professional_id,user['hospital_id']))
+        c.execute('UPDATE users SET active=0 WHERE id=?',(user['id'],))
     if eid:c.execute('UPDATE employees SET user_id=?,version=version+1 WHERE id=?',(user['id'],eid))
     c.execute("INSERT INTO audit(actor,action,resource,record_id,hospital_id) VALUES(?,'invitation-register','user',?,?)",(user['username'],user['id'],user['hospital_id']))
-    handler.send(200,{'message':'Account registered. Sign in with your new username and password.'});return True
+    handler.send(200,{'message':'Provider account registered. Hospital administrator must activate it before sign-in.' if professional_id else 'Account registered. Sign in with your new username and password.'});return True
 
 
 def handle(handler,c,u,path,method):

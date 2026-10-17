@@ -23,7 +23,7 @@ async function fixture(role){
   else data=[];
   return {ok:true,status:200,json:async()=>data};
  };
- w.eval(source+'\nwindow.testing={managementView,portabilityView,deviceView,chartingView,rosterView,recordView,edit,safetyView};');
+ w.eval(source+'\nwindow.testing={managementView,portabilityView,deviceView,chartingView,rosterView,recordView,edit,safetyView,professionalsView};');
  await new Promise(r=>setTimeout(r,25));return {dom,w,calls};
 }
 test('platform administrator sees hospital controls and staff creation sends selected tenant',async()=>{
@@ -81,5 +81,15 @@ test('safety command center opens the real source-linked review queue',async()=>
  const {dom,w,calls}=await fixture('admin');try{
   await w.testing.safetyView();const button=[...w.document.querySelectorAll('#dashboard button')].find(b=>b.textContent.includes('Critical result acknowledgment'));assert.ok(button);button.click();
   await new Promise(r=>setTimeout(r,20));assert.ok(calls.find(c=>c.path==='/api/critical_results'));assert.equal(w.document.getElementById('title').textContent,'Critical result acknowledgment');
+ }finally{dom.window.close();}
+});
+
+test('provider registration submits credentials for hospital review without granting a client-chosen role',async()=>{
+ const {dom,w,calls}=await fixture('admin');try{
+  const form=[...w.document.querySelectorAll('form')].find(f=>f.elements.hospital_slug);assert.ok(form);
+  for(const [key,value] of Object.entries({hospital_slug:'existing-hospital',name:'Synthetic Provider',email:'provider@example.test',phone:'0000000000',profession:'nurse',specialty:'General',license_number:'TEST123',license_jurisdiction:'Synthetic',license_expiry:'2099-01-01'}))form.elements[key].value=value;
+  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  const call=calls.find(c=>c.path==='/api/provider-registration'&&c.opts.method==='POST');assert.ok(call);const data=JSON.parse(call.opts.body);assert.equal(data.profession,'nurse');assert.equal(data.hospital_slug,'existing-hospital');assert.equal(data.role,undefined);
+  await w.testing.professionalsView();assert.ok(calls.find(c=>c.path==='/api/provider-applications'));assert.match(w.document.getElementById('dashboard').textContent,/Register provider/);
  }finally{dom.window.close();}
 });
