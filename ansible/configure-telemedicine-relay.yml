@@ -1,0 +1,92 @@
+---
+- name: Configure a private authenticated telemedicine TURN relay
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    medical_turn_hostname: olamidemedical.health
+    medical_turn_min_port: 49160
+    medical_turn_max_port: 49200
+  tasks:
+    - name: Require explicit public address and private shared secret
+      ansible.builtin.assert:
+        that:
+          - medical_turn_public_ip is defined
+          - medical_turn_public_ip is match('^[0-9.]+$')
+          - medical_turn_secret is defined
+          - medical_turn_secret is match('^[A-Za-z0-9_-]{32,}$')
+          - medical_turn_hostname is match('^[a-z0-9.-]+$')
+        fail_msg: Set medical_turn_public_ip and a unique URL-safe medical_turn_secret (32+ characters) through Ansible Vault.
+      no_log: true
+
+    - name: Install coturn
+      ansible.builtin.apt:
+        name: coturn
+        state: present
+        update_cache: true
+
+    - name: Store authenticated relay configuration
+      ansible.builtin.copy:
+        dest: /etc/turnserver.conf
+        backup: true
+        owner: root
+        group: turnserver
+        mode: '0640'
+        content: |
+          listening-port=3478
+          fingerprint
+          use-auth-secret
+          static-auth-secret={{ medical_turn_secret }}
+          realm={{ medical_turn_hostname }}
+          external-ip={{ medical_turn_public_ip }}
+          min-port={{ medical_turn_min_port }}
+          max-port={{ medical_turn_max_port }}
+          no-cli
+          no-multicast-peers
+          no-tls
+          no-dtls
+          user-quota=4
+          total-quota=200
+          denied-peer-ip=0.0.0.0-0.255.255.255
+          denied-peer-ip=10.0.0.0-10.255.255.255
+          denied-peer-ip=127.0.0.0-127.255.255.255
+          denied-peer-ip=169.254.0.0-169.254.255.255
+          denied-peer-ip=172.16.0.0-172.31.255.255
+          denied-peer-ip=192.168.0.0-192.168.255.255
+          denied-peer-ip=224.0.0.0-255.255.255.255
+          denied-peer-ip=::1
+      no_log: true
+
+    - name: Create protected runtime directory
+      ansible.builtin.file:
+        path: /etc/olamidemedical
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Configure application to mint expiring relay credentials
+      ansible.builtin.copy:
+        dest: /etc/olamidemedical/turn.env
+        owner: root
+        group: root
+        mode: '0600'
+        content: |
+          MEDICAL_TURN_URLS=turn:{{ medical_turn_hostname }}:3478?transport=udp,turn:{{ medical_turn_hostname }}:3478?transport=tcp
+          MEDICAL_TURN_SECRET={{ medical_turn_secret }}
+      no_log: true
+
+    - name: Start relay
+      ansible.builtin.systemd:
+        name: coturn
+        enabled: true
+        state: restarted
+
+    - name: Restart medical service to apply relay settings
+      ansible.builtin.systemd:
+        name: olamidemedical.service
+        state: restarted
+
+    - name: Report network requirements
+      ansible.builtin.debug:
+        msg: 'Allow UDP/TCP 3478 and UDP {{ medical_turn_min_port }}-{{ medical_turn_max_port }} at the host/provider firewall. Verify calls between two different networks. This playbook does not alter firewalls or configure TURN over TLS on port 443.'

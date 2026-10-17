@@ -1,0 +1,275 @@
+---
+- name: Deploy hospital tenancy and patient portability
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    medical_repository: https://github.com/olamidebello/Olamidemedical.git
+    medical_revision: main
+    medical_source: /opt/olamidemedical-source
+    medical_install: /opt/olamidemedical
+    medical_database: /opt/olamidemedical/data/hospital.db
+    medical_port: 8095
+    medical_superadmin_username: platformadmin
+  vars_prompt:
+    - name: medical_superadmin_password
+      prompt: Platform administrator password (12+ characters; existing passwords are preserved)
+      private: true
+      confirm: true
+  tasks:
+    - name: Validate deployment paths and administrator secret
+      ansible.builtin.assert:
+        that:
+          - medical_database.startswith('/opt/olamidemedical/data/')
+          - medical_superadmin_password is defined
+          - medical_superadmin_password | length >= 12
+          - not medical_superadmin_password.startswith('REPLACE_')
+          - medical_source != medical_install
+        fail_msg: Provide medical_superadmin_password through Ansible Vault (12+ characters); use an existing medical database under /opt/olamidemedical/data/.
+      no_log: true
+
+    - name: Pull source without discarding changes
+      ansible.builtin.git:
+        repo: '{{ medical_repository }}'
+        dest: '{{ medical_source }}'
+        version: '{{ medical_revision }}'
+        force: false
+
+    - name: Verify tenancy source is present
+      ansible.builtin.stat:
+        path: '{{ medical_source }}/mobility.py'
+      register: tenancy_source
+
+    - name: Require implemented tenancy revision
+      ansible.builtin.assert:
+        that: tenancy_source.stat.exists
+        fail_msg: Push the tenancy implementation to GitHub before running this playbook.
+
+    - name: Run synthetic workflow and isolation tests before deployment
+      ansible.builtin.command:
+        argv: [python3, -m, unittest, discover, -s, tests, -v]
+        chdir: '{{ medical_source }}'
+      changed_when: false
+
+    - name: Create service identity
+      ansible.builtin.user:
+        name: olamidemedical
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Ensure application directory is readable by service identity
+      ansible.builtin.file:
+        path: "{{ medical_install }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create protected recovery directory
+      ansible.builtin.file:
+        path: /var/backups/olamidemedical
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Pause existing alert workers before the backup
+      ansible.builtin.command:
+        argv: [systemctl, stop, olamidemedical-alerts.timer, olamidemedical-alerts.service]
+      register: stop_alerts
+      failed_when: false
+      changed_when: stop_alerts.rc == 0
+
+    - name: Stop medical service for consistent migration
+      ansible.builtin.systemd:
+        name: olamidemedical.service
+        state: stopped
+
+    - name: Back up and update
+      block:
+        - name: Back up installed source and data before migration
+          ansible.builtin.command:
+            argv: [tar, -czf, '/var/backups/olamidemedical/pre-tenancy-{{ ansible_date_time.iso8601_basic_short }}.tar.gz', -C, /opt, olamidemedical]
+          no_log: true
+
+        - name: Install Python application modules
+          ansible.builtin.copy:
+            src: '{{ medical_source }}/{{ item }}'
+            dest: '{{ medical_install }}/{{ item }}'
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0644'
+          loop: [server.py, tenancy.py, mobility.py, devices.py, registration.py, operations.py, telehealth.py, clinical_ai.py, ward.py, safety.py]
+
+        - name: Install GUI
+          ansible.builtin.copy:
+            src: '{{ medical_source }}/static/'
+            dest: '{{ medical_install }}/static/'
+            remote_src: true
+            owner: root
+            group: root
+            mode: preserve
+
+        - name: Migrate database and create separate platform administrator
+          ansible.builtin.command:
+            argv: [python3, '{{ medical_source }}/deploy/bootstrap_tenancy.py']
+            stdin: '{{ {"username": medical_superadmin_username, "password": medical_superadmin_password} | to_json }}'
+          environment:
+            DATABASE_PATH: '{{ medical_database }}'
+          register: bootstrap
+          changed_when: (bootstrap.stdout | from_json).changed
+          no_log: true
+
+        - name: Protect database directory for service access
+          ansible.builtin.file:
+            path: '{{ medical_database | dirname }}'
+            state: directory
+            owner: olamidemedical
+            group: olamidemedical
+            mode: '0700'
+
+        - name: Assign database and WAL ownership
+          ansible.builtin.command:
+            argv:
+              - python3
+              - -c
+              - |
+                import os,pwd,sys
+                account=pwd.getpwnam('olamidemedical')
+                for suffix in ('','-wal','-shm'):
+                    path=sys.argv[1]+suffix
+                    if os.path.exists(path):
+                        os.chown(path,account.pw_uid,account.pw_gid)
+                        os.chmod(path,0o600)
+              - '{{ medical_database }}'
+          changed_when: true
+
+        - name: Create runtime configuration directory
+          ansible.builtin.file:
+            path: /etc/olamidemedical
+            state: directory
+            owner: root
+            group: root
+            mode: '0700'
+
+        - name: Optionally install explicitly selected AI environment file
+          ansible.builtin.copy:
+            src: '{{ medical_ai_env_file }}'
+            dest: /etc/olamidemedical/ai.env
+            owner: root
+            group: root
+            mode: '0600'
+          when: medical_ai_env_file is defined
+          no_log: true
+
+        - name: Install alert worker directory
+          ansible.builtin.file:
+            path: '{{ medical_install }}/deploy'
+            state: directory
+            mode: '0755'
+
+        - name: Install scheduled alert reconciliation
+          ansible.builtin.copy:
+            src: '{{ medical_source }}/deploy/reconcile_alerts.py'
+            dest: '{{ medical_install }}/deploy/reconcile_alerts.py'
+            remote_src: true
+            mode: '0644'
+
+        - name: Install alert service
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/olamidemedical-alerts.service
+            mode: '0644'
+            content: |
+              [Unit]
+              Description=Olamide Medical operational alert reconciliation
+              After=olamidemedical.service
+              [Service]
+              Type=oneshot
+              User=olamidemedical
+              Group=olamidemedical
+              Environment=DATABASE_PATH={{ medical_database }}
+              ExecStart=/usr/bin/python3 {{ medical_install }}/deploy/reconcile_alerts.py
+              NoNewPrivileges=true
+              ProtectSystem=strict
+              ProtectHome=true
+              ReadWritePaths={{ medical_database | dirname }}
+              UMask=0077
+
+        - name: Install alert timer
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/olamidemedical-alerts.timer
+            mode: '0644'
+            content: |
+              [Unit]
+              Description=Review operational alert conditions every five minutes
+              [Timer]
+              OnBootSec=60s
+              OnUnitInactiveSec=300s
+              Unit=olamidemedical-alerts.service
+              [Install]
+              WantedBy=timers.target
+
+        - name: Install unprivileged HTTPS-backed service
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/olamidemedical.service
+            mode: '0644'
+            content: |
+              [Unit]
+              Description=Olamide Medical hospital platform
+              After=network.target
+              [Service]
+              User=olamidemedical
+              Group=olamidemedical
+              WorkingDirectory={{ medical_install }}
+              Environment=DATABASE_PATH={{ medical_database }}
+              Environment=COOKIE_SECURE=1
+              EnvironmentFile=-/etc/olamidemedical/ai.env
+              EnvironmentFile=-/etc/olamidemedical/turn.env
+              ExecStart=/usr/bin/python3 {{ medical_install }}/server.py --host 127.0.0.1 --port {{ medical_port }}
+              Restart=on-failure
+              RestartSec=5
+              UMask=0077
+              NoNewPrivileges=true
+              PrivateTmp=true
+              ProtectSystem=strict
+              ProtectHome=true
+              ReadWritePaths={{ medical_database | dirname }}
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Start migrated application
+          ansible.builtin.systemd:
+            name: olamidemedical.service
+            state: restarted
+            enabled: true
+            daemon_reload: true
+
+        - name: Verify medical health
+          ansible.builtin.uri:
+            url: 'http://127.0.0.1:{{ medical_port }}/health'
+            return_content: true
+          register: medical_health
+          until: medical_health.status | default(0) == 200 and medical_health.json.status | default('') == 'ok'
+          retries: 15
+          delay: 2
+
+        - name: Enable periodic alert reconciliation
+          ansible.builtin.systemd:
+            name: olamidemedical-alerts.timer
+            enabled: true
+            state: started
+            daemon_reload: true
+
+        - name: Report platform login
+          ansible.builtin.debug:
+            msg: 'Sign in at https://olamidemedical.health as {{ medical_superadmin_username }} using your Vault password. Existing hospital records remain under Existing Hospital. Existing platform passwords are preserved on reruns.'
+      rescue:
+        - name: Stop unsuccessful deployment
+          ansible.builtin.systemd:
+            name: olamidemedical.service
+            state: stopped
+        - name: Report recovery location
+          ansible.builtin.fail:
+            msg: 'Migration/deployment failed; service stopped. Backups are in /var/backups/olamidemedical. Review the error before restoring source and database together.'

@@ -1,0 +1,5 @@
+# Copy outside the repository, replace this placeholder, then encrypt with ansible-vault.
+medical_superadmin_username: platformadmin
+medical_superadmin_password: REPLACE_WITH_A_UNIQUE_PRIVATE_PASSWORD
+medical_database: /opt/olamidemedical/data/hospital.db
+medical_port: 8095
